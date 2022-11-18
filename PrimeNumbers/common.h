@@ -6,6 +6,7 @@
 //#define PRINT_ONELINE_STATS(msg, ...) printf(msg "\n", __VA_ARGS__);
 
 #ifdef _DEBUG
+//#if 1
 #define PRINT_PROGRESS(msg, ...) printf("[PROGRESS #%d] " msg ".\n", __VA_ARGS__);
 #define PRINT_ANSWER(msg, ...) printf("[ANSWER #%d] " msg ".\n", __VA_ARGS__);
 #define PRINT_SOFT_WAIT(msg, ...) printf("[SOFT WAIT #%d] " msg ".\n", __VA_ARGS__);
@@ -58,4 +59,4 @@
 
 typedef unsigned long long ulong;
 
-const int SPIN_COUNT = 128 * 1000;
+extern int SPIN_COUNT;
