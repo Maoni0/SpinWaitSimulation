@@ -243,6 +243,64 @@ public:
     virtual ulong join(int inputIndex, int threadId, bool* wasHardWait, unsigned __int64* spinLoopStartTime, unsigned __int64* spinLoopStopTime);
 };
 
+class t_join_pause2 : public t_join
+{
+public:
+    t_join_pause2(int numThreads) : t_join(numThreads)
+    {
+    }
+
+    /// <summary>
+    /// Use the default implementation of "join" where we use "pause"
+    /// inside the spin-loop and if after X spin iterations, color doesn't
+    /// change, we would go to hard-wait.
+    /// </summary>
+    /// <param name="inputIndex">index for which join is performed.</param>
+    /// <param name="threadId">Thread id</param>
+    /// <param name="wasHardWait">If there was hardwait needed</param>
+    /// <returns>Total spin iterations performed.</returns>
+    virtual ulong join(int inputIndex, int threadId, bool* wasHardWait, unsigned __int64* spinLoopStartTime, unsigned __int64* spinLoopStopTime);
+};
+
+class t_join_pause10 : public t_join
+{
+public:
+    t_join_pause10(int numThreads) : t_join(numThreads)
+    {
+    }
+
+    /// <summary>
+    /// Use the default implementation of "join" where we use "pause"
+    /// inside the spin-loop and if after X spin iterations, color doesn't
+    /// change, we would go to hard-wait.
+    /// </summary>
+    /// <param name="inputIndex">index for which join is performed.</param>
+    /// <param name="threadId">Thread id</param>
+    /// <param name="wasHardWait">If there was hardwait needed</param>
+    /// <returns>Total spin iterations performed.</returns>
+    virtual ulong join(int inputIndex, int threadId, bool* wasHardWait, unsigned __int64* spinLoopStartTime, unsigned __int64* spinLoopStopTime);
+};
+
+class t_join_no_pause : public t_join
+{
+public:
+    t_join_no_pause(int numThreads) : t_join(numThreads)
+    {
+    }
+
+    /// <summary>
+    /// Use the default implementation of "join" where we use "pause"
+    /// inside the spin-loop and if after X spin iterations, color doesn't
+    /// change, we would go to hard-wait.
+    /// </summary>
+    /// <param name="inputIndex">index for which join is performed.</param>
+    /// <param name="threadId">Thread id</param>
+    /// <param name="wasHardWait">If there was hardwait needed</param>
+    /// <returns>Total spin iterations performed.</returns>
+    virtual ulong join(int inputIndex, int threadId, bool* wasHardWait, unsigned __int64* spinLoopStartTime, unsigned __int64* spinLoopStopTime);
+};
+
+
 class t_join_mwaitx_noloop : public t_join
 {
 private:

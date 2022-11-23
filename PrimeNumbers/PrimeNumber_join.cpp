@@ -12,6 +12,21 @@
 #include "common.h"
 #include "t_join.h"
 
+const char* str_join_types[] =
+{
+    "invalid",
+    "t_join_pause",
+    "t_join_pause_soft_wait_only",
+    "t_join_mwaitx_loop",
+    "t_join_mwaitx_loop_soft_wait_only",
+    "t_join_mwaitx_noloop",
+    "t_join_mwaitx_noloop_soft_wait_only",
+    "t_join_hard_wait_only",
+    "t_join_no_pause",
+    "t_join_pause2",
+    "t_join_pause10"
+};
+
 int SPIN_COUNT;
 
 t_join* joinData = nullptr;
@@ -59,34 +74,6 @@ const double _1M = pow(10, 6);
 const double _1K = pow(10, 3);
 const char* formatNumber(long long input)
 {
-    //double scaledInput = input;
-    //char scaledUnit = ' ';
-    //if (input > _1Q)
-    //{
-    //    scaledInput /= _1Q;
-    //    scaledUnit = 'Q';
-    //}
-    //else if (input > _1T)
-    //{
-    //    scaledInput /= _1T;
-    //    scaledUnit = 'T';
-    //}
-    //else if (input > _1B)
-    //{
-    //    scaledInput /= _1B;
-    //    scaledUnit = 'B';
-    //}
-    //else if (input > _1M)
-    //{
-    //    scaledInput /= _1M;
-    //    scaledUnit = 'M';
-    //}
-    //else if (input > _1K)
-    //{
-    //    scaledInput /= _1K;
-    //    scaledUnit = 'K';
-    //}
-
     int64_t saved_input = input;
     char* buffer = (char*)malloc(sizeof(char) * 100);
     //sprintf_s(buffer, 100, "%4.2f%c", scaledInput, scaledUnit);
@@ -352,9 +339,9 @@ private:
 
         if (join_type_used)
         {
-            if ((join_type < 1) || (join_type > 7))
+            if ((join_type < 1) || (join_type > 10))
             {
-                printf("Invalid value '%d' for '--join_type'. Should be between 1 and 7.\n", join_type);
+                printf("Invalid value '%d' for '--join_type'. Should be between 1 and 10.\n", join_type);
                 PrintUsageAndExit();
             }
             else
@@ -430,7 +417,7 @@ public:
             PROCESSOR_COUNT = userInput_processor_count;
         }
 
-        PRINT_STATS("Running: SPIN_COUNT= %d, numbers= %d, complexity= %d, JOIN_TYPE= %d, threads= %d", SPIN_COUNT, INPUT_COUNT, COMPLEXITY, JOIN_TYPE, PROCESSOR_COUNT);
+        PRINT_STATS("Running: SPIN_COUNT= %d, numbers= %d, complexity= %d, JOIN_TYPE= %s, threads= %d", SPIN_COUNT, INPUT_COUNT, COMPLEXITY, str_join_types[JOIN_TYPE], PROCESSOR_COUNT);
     }
 
     /// <summary>
@@ -470,6 +457,15 @@ public:
         case 7:
             joinData = new t_join_hard_wait_only(PROCESSOR_COUNT);
             break;
+        case 8:
+            joinData = new t_join_no_pause(PROCESSOR_COUNT);
+            break;
+        case 9:
+            joinData = new t_join_pause2(PROCESSOR_COUNT);
+            break;
+        case 10:
+            joinData = new t_join_pause10(PROCESSOR_COUNT);
+            break;
         default:
             printf("");
             break;
@@ -481,7 +477,7 @@ public:
             ThreadInput* tInput = new ThreadInput(i, INPUT_COUNT);
             if (tInput != NULL)
             {
-                float n;
+                //float n;
                 tInput->input = (ulong*)malloc((sizeof(ulong) * INPUT_COUNT));
                 for (int i = 0; i < INPUT_COUNT; i++)
                 {
@@ -491,8 +487,10 @@ public:
                     }
                     else
                     {
-                        n = (float)rand() / RAND_MAX;
-                        tInput->input[i] = (ulong)(n * (100 + pow(2, COMPLEXITY)));
+                        //n = (float)rand() / RAND_MAX;
+                        //tInput->input[i] = (ulong)(n * (100 + pow(2, COMPLEXITY)));
+                        ulong num = (ulong)pow(2, COMPLEXITY);
+                        tInput->input[i] = rand() % num + 1;
                         //printf("t %d: num %I64d\n", i, tInput->input[i]);
                     }
                 }
@@ -583,13 +581,17 @@ public:
 
         DiffWakeTime(avgHardWaitWakeupTime, avgSoftWaitWakeupTime, &avgDiff, &avgDiffChar);
 
-        printf("______________________________________________________________________________________________\n");
-        printf("%10s | %10s | %10s | %20s | %30s |\n", "wait type", "total", "per number", "spin (cycles/wait)", "wakeup latency (cycles/wait)");
-        printf("______________________________________________________________________________________________\n");
-        printf("%10s | %10s | %10.03f | % 20s | % 30s |\n", "soft", formatNumber(totalSoftWaits), ((double)totalSoftWaits / (INPUT_COUNT * PROCESSOR_COUNT)), formatNumber(avgSpinLoopTimePerSoftWait), formatNumber(avgSoftWaitWakeupTime));
-        printf("%10s | %10s | %10.03f | % 20s | % 30s |\n", "hard", formatNumber(totalHardWaits), ((double)totalHardWaits / (INPUT_COUNT * PROCESSOR_COUNT)), formatNumber(avgSpinLoopTimePerHardWait), formatNumber(avgHardWaitWakeupTime));
-        printf("______________________________________________________________________________________________\n");
-        printf("Elapsed cycles: %s, elapsed time (ms): %s\n", formatNumber(elapsed_ticks), formatNumber(elapsed_time));
+        ulong totalSoftWaitIterations = totalIterations - (totalHardWaits * SPIN_COUNT);
+
+        printf("___________________________________________________________________________________________________________\n");
+        printf("%10s | %10s | %10s | %10s | %20s | %30s |\n", "wait type", "total", "per number", "iterations", "spin (cycles/wait)", "wakeup latency (cycles/wait)");
+        printf("___________________________________________________________________________________________________________\n");
+        printf("%10s | %10s | %10.03f | %10s | % 20s | % 30s |\n", "soft", formatNumber(totalSoftWaits), ((double)totalSoftWaits / (INPUT_COUNT * (PROCESSOR_COUNT - 1))), 
+            (totalSoftWaits ? formatNumber(totalSoftWaitIterations / totalSoftWaits) : 0), formatNumber(avgSpinLoopTimePerSoftWait), formatNumber(avgSoftWaitWakeupTime));
+        printf("%10s | %10s | %10.03f | %10s | % 20s | % 30s |\n", "hard", formatNumber(totalHardWaits), ((double)totalHardWaits / (INPUT_COUNT * (PROCESSOR_COUNT - 1))), 
+            formatNumber(SPIN_COUNT), formatNumber(avgSpinLoopTimePerHardWait), formatNumber(avgHardWaitWakeupTime));
+        printf("___________________________________________________________________________________________________________\n");
+        printf("Elapsed cycles: %s (total cycles in spin: %I64d(%s), %s/thread), elapsed time (ms): %s\n", formatNumber(elapsed_ticks), totalSpinLoopTime, formatNumber(totalSpinLoopTime), formatNumber(totalSpinLoopTime / PROCESSOR_COUNT), formatNumber(elapsed_time));
 
         PRINT_ONELINE_STATS("OUT] %d|%d|%d|%llu|%d|%d|%llu|%llu|%llu|%llu|%d|%d|%llu|%llu|%llu|%llu|%d|%d|%llu|%llu|%llu|%llu|%llu",
             numPrimeNumbers, complexity, PROCESSOR_COUNT,

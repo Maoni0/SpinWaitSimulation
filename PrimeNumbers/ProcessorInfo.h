@@ -123,6 +123,10 @@ void SetThreadAffinity(int processorCount, bool isMultiCpuGroup, std::vector<HAN
 				printf("SetThreadGroupAffinity returned 0 for processor %d. GetLastError() = %u\n", procNo, GetLastError());
 				return;
 			}
+			else
+			{
+				//printf("affinitizing thread %d with index %d\n", procNo, groupProcNo.GetProcIndex());
+			}
 		}
 	}
 }

@@ -1,0 +1,433 @@
+
+#include <windows.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <intrin.h>
+#include <conio.h>
+#include <chrono>
+
+
+int g_proc_index = 0;
+
+const unsigned HS_CACHE_LINE_SIZE = 128;
+
+struct __declspec(align(HS_CACHE_LINE_SIZE)) aligned_location
+{
+    volatile size_t loc;
+    __declspec(align(HS_CACHE_LINE_SIZE)) size_t extra_field;
+};
+
+volatile aligned_location g_aligned_global_location;
+
+ULONGLONG g_timeout = 100000;
+
+uint64_t g_waited_count;
+HANDLE g_hThread;
+// these are measured with OS APIs.
+uint64_t g_umode_cpu_time, g_kmode_cpu_time, g_elapsed_time, g_total_cycles; 
+// these are measured on the thread. 
+uint64_t g_total_cycles_on_thread;
+uint64_t g_elapsed_time_us_on_thread;
+
+
+const char* formatNumber(uint64_t input)
+{
+    int64_t saved_input = input;
+    char* buffer = (char*)malloc(sizeof(char) * 100);
+    //sprintf_s(buffer, 100, "%4.2f%c", scaledInput, scaledUnit);
+
+    int base = 10;
+    int char_index = 0;
+    int num_chars = 0;
+    while (char_index < 100)
+    {
+        if (input)
+        {
+            buffer[char_index] = (char)(input % base + '0');
+            input /= 10;
+            num_chars++;
+
+            //printf("input is %I64d, num_chars %d, char_index %d->%c\n", input, num_chars, char_index, buffer[char_index]);
+
+            if (num_chars == 3)
+            {
+                //printf("setting char at index %d to ,\n", (char_index + 1));
+                buffer[++char_index] = ',';
+                num_chars = 0;
+            }
+            char_index++;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    if (char_index > 0)
+    {
+        if (buffer[char_index - 1] == ',')
+        {
+            char_index--;
+        }
+    }
+
+    if (char_index == 0)
+    {
+        buffer[char_index++] = '0';
+    }
+    buffer[char_index] = '\0';
+
+    //printf("setting char at index %d to null, now string is %s\n", char_index, buffer);
+
+    for (int i = 0; i < (char_index / 2); i++)
+    {
+        char c = buffer[i];
+        buffer[i] = buffer[char_index - 1 - i];
+        buffer[char_index - 1 - i] = c;
+    }
+
+    //printf("input is %I64d -> %s\n", saved_input, buffer);
+
+    return buffer;
+}
+
+void PrintTime(HANDLE h, const char* msg, size_t waited_count)
+{
+    // FILETIME is in 100ns intervals, so (t / 10) is 1us
+    FILETIME create_t, exit_t, kernel_t, user_t;
+    if (!GetThreadTimes(h, &create_t, &exit_t, &kernel_t, &user_t))
+    {
+        printf("GetThreadTimes failed with %d\n", GetLastError());
+        return;
+    }//if
+
+    const ULONGLONG umode_cpu_time = *reinterpret_cast<const ULONGLONG*>(&user_t);
+    const ULONGLONG kmode_cpu_time = *reinterpret_cast<const ULONGLONG*>(&kernel_t);
+    const ULONGLONG start_time = *reinterpret_cast<const ULONGLONG*>(&create_t);
+    const ULONGLONG end_time = *reinterpret_cast<const ULONGLONG*>(&exit_t);
+
+    printf("umode cpu %I64dms, kmode cpu %I64dms, elapsed time %I64dms\n", (umode_cpu_time / 10000), (kmode_cpu_time / 10000), ((end_time - start_time) / 10000));
+
+    uint64_t cycles = 0;
+    QueryThreadCycleTime(h, &cycles);
+    printf("%s cycles total, %I64d/iteration\n", formatNumber(cycles), (cycles / waited_count));
+
+    g_umode_cpu_time = umode_cpu_time;
+    g_kmode_cpu_time = kmode_cpu_time;
+    g_elapsed_time = end_time - start_time;
+    g_total_cycles = cycles;
+}
+
+DWORD WINAPI ThreadFunction_pause(LPVOID lpParam)
+{
+    unsigned int EFLAGS = __getcallerseflags();
+    printf("eflags are %d, IF bit is %s\n", EFLAGS, ((EFLAGS & 0x200) ? "enabled" : "disabled"));
+    size_t original_value = g_aligned_global_location.loc;
+    size_t waited_count = 0;
+    printf("original value is %Id\n", original_value);
+    uint64_t start = __rdtsc();
+
+    while (g_aligned_global_location.loc == original_value)
+    {
+        YieldProcessor();
+        waited_count++;
+    }
+
+    g_waited_count = waited_count;
+
+    uint64_t elapsed = __rdtsc() - start;
+    //printf("[%10s] changed to %Id and waited %Is times, %I64d cycles elapsed!\n", 
+    //    "pause", g_aligned_global_location.loc, formatNumber(waited_count), elapsed);
+
+    return 0;
+}
+
+DWORD WINAPI ThreadFunction_tpause(LPVOID lpParam)
+{
+    size_t original_value = g_aligned_global_location.loc;
+    size_t waited_count = 0;
+    printf("original value is %Id, timeout is %I64d\n", original_value, g_timeout);
+
+    while (g_aligned_global_location.loc == original_value)
+    {
+        //_umonitor(&g_aligned_global_location.loc);
+
+        //_umwait(1, g_timeout);
+        //_tpause(0, g_timeout);
+        _tpause(1, g_timeout);
+        //printf("wait exited\n");
+        waited_count++;
+    }
+
+    //printf("[%10s] changed to %Id and waited %s times!\n", "tpause", g_aligned_global_location.loc, formatNumber(waited_count));
+    g_waited_count = waited_count;
+    return 0;
+}
+
+DWORD WINAPI ThreadFunction_umwait(LPVOID lpParam)
+{
+    size_t original_value = g_aligned_global_location.loc;
+    size_t waited_count = 0;
+    printf("original value is %Id, timeout is %I64d\n", original_value, g_timeout);
+
+    while (g_aligned_global_location.loc == original_value)
+    {
+        _umonitor((void*)&g_aligned_global_location.loc);
+        _umwait(1, g_timeout);
+        //printf("wait exited\n");
+        waited_count++;
+    }
+
+    //printf("[%10s] changed to %Id and waited %s times!\n", "umwait", g_aligned_global_location.loc, formatNumber(waited_count));
+
+    g_waited_count = waited_count;
+    return 0;
+}
+
+DWORD WINAPI ThreadFunction_mwaitx(LPVOID lpParam)
+{
+    size_t original_value = g_aligned_global_location.loc;
+    size_t waited_count = 0;
+    printf("original value is %Id, timeout is %I64d\n", original_value, g_timeout);
+    uint64_t start_cycles = __rdtsc();
+    auto time_start = std::chrono::steady_clock::now();
+
+    while (g_aligned_global_location.loc == original_value)
+    {
+        _mm_monitorx((const void*)&g_aligned_global_location.loc, 0, 0);
+
+        if (g_aligned_global_location.loc == original_value) {
+            waited_count++;
+            _mm_mwaitx(2, 0, (uint32_t)g_timeout);
+        }
+    }
+
+    g_total_cycles_on_thread = __rdtsc() - start_cycles;
+    g_elapsed_time_us_on_thread = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - time_start).count();
+
+    printf("[%10s] changed to %Id and waited %s times!\n", "mwaitx", g_aligned_global_location.loc, formatNumber(waited_count));
+
+    g_waited_count = waited_count;
+    return 0;
+}
+
+DWORD WINAPI ThreadFunction_mwaitx2(LPVOID lpParam)
+{
+    size_t original_value = g_aligned_global_location.loc;
+    size_t waited_count = 0;
+    printf("original value is %Id, timeout is %I64d\n", original_value, g_timeout);
+
+    while (g_aligned_global_location.loc == original_value)
+    {
+        _mm_monitorx((const void*)&g_aligned_global_location.loc, 0, 0);
+
+        if (g_aligned_global_location.loc == original_value) {
+            _mm_mwaitx(2, 0, (uint32_t)g_timeout);
+            waited_count++;
+        }
+    }
+
+    printf("[%10s] changed to %Id and waited %s times!\n", "mwaitx", g_aligned_global_location.loc, formatNumber(waited_count));
+
+    g_waited_count = waited_count;
+    return 0;
+}
+
+uint64_t g_total_iter = 10000;
+uint64_t sum = 0;
+
+void inc_only()
+{
+    uint64_t counter = 0;
+    uint64_t start = __rdtsc();
+
+    for (uint64_t i = 0; i < g_total_iter; i++)
+    {
+        counter += i * 2;
+    }
+
+    uint64_t elapsed = __rdtsc() - start;
+    sum = counter;
+
+    printf("[%15s] %Id iterations took %15s cycles(%5s/iter), sum is %30s\n", "inc_only",
+        g_total_iter, formatNumber(elapsed), formatNumber(elapsed / g_total_iter), formatNumber(sum));
+}
+
+void inc_with_pause()
+{
+    uint64_t counter = 0;
+    uint64_t start = __rdtsc();
+
+    for (uint64_t i = 0; i < g_total_iter; i++)
+    {
+        counter += i * 2;
+        YieldProcessor();
+    }
+
+    uint64_t elapsed = __rdtsc() - start;
+    sum = counter;
+
+    printf("[%15s] %Id iterations took %15s cycles(%5s/iter), sum is %30s\n", "inc_with_pause",
+        g_total_iter, formatNumber(elapsed), formatNumber(elapsed / g_total_iter), formatNumber(sum));
+}
+
+void parse_cmd_args(int argc, char** argv)
+{
+    for (int arg_index = 1; arg_index < argc; arg_index)
+    {
+        if (!strcmp(argv[arg_index], "-ti"))
+        {
+            g_total_iter = atoi(argv[++arg_index]);
+        }
+        else if (!strcmp(argv[arg_index], "-timeout"))
+        {
+            g_timeout = atoi(argv[++arg_index]);
+        }
+        else if (!strcmp(argv[arg_index], "-proc"))
+        {
+            g_proc_index = atoi(argv[++arg_index]);
+        }
+
+        ++arg_index;
+    }
+}
+
+void experiment(LPTHREAD_START_ROUTINE proc)
+{
+    DWORD tid;
+    g_hThread = CreateThread(
+        NULL,                   // default security attributes
+        0,                      // use default stack size
+        proc,     // thread function name
+        NULL, //(LPVOID)secondsToSleep, // argument to thread function
+        CREATE_SUSPENDED,
+        &tid);   // returns the thread identifier
+
+    if (g_hThread == NULL)
+    {
+        printf("CreateThread failed: %d\n", GetLastError());
+        return;
+    }
+    else
+    {
+        printf("thread %d created\n", tid);
+    }
+
+    ResumeThread(g_hThread);
+
+    // sleep for 10s
+    Sleep((DWORD)10 * 1000);
+    g_aligned_global_location.loc = 5;
+
+    printf("end...\n");
+}
+
+const char* str_wait_type[] =
+{
+    "pause",
+    "tpause",
+    "umwait",
+    "mwaitx",
+    "mwaitx2"
+};
+
+int main(int argc, char** argv)
+{
+    g_aligned_global_location.loc = 10;
+    parse_cmd_args(argc, argv);
+
+    //inc_only();
+    //inc_with_pause();
+    //inc_only();
+    //inc_with_pause();
+
+    //return 0;
+
+    enum reg
+    {
+        EAX = 0,
+        EBX = 1,
+        ECX = 2,
+        EDX = 3,
+        COUNT = 4
+    };
+
+    // bit definitions to make code more readable
+    enum bits
+    {
+        WAITPKG = 1 << 5,
+    };
+    int reg[COUNT];
+
+    __cpuid(reg, 0);
+    __cpuid(reg, 1);
+    __cpuid(reg, 7);
+
+    bool supports_umwait = (reg[ECX] & bits::WAITPKG);
+
+    LPTHREAD_START_ROUTINE proc;
+
+    switch (g_proc_index)
+    {
+    case 0:
+        proc = ThreadFunction_pause;
+        break;
+
+    case 1:
+        if (!supports_umwait)
+        {
+            printf("this machine does not support tpause!\n");
+            return 1;
+        }
+        proc = ThreadFunction_tpause;
+        break;
+
+    case 2:
+        if (!supports_umwait)
+        {
+            printf("this machine does not support umwait!\n");
+            return 1;
+        }
+        proc = ThreadFunction_umwait;
+        break;
+
+    case 3:
+        proc = ThreadFunction_mwaitx;
+        break;
+
+    case 4:
+        proc = ThreadFunction_mwaitx2;
+        break;
+
+    default:
+        printf("proc index %d does not exist!\n", g_proc_index);
+        return 1;
+    }
+
+    experiment(proc);
+    WaitForSingleObject(g_hThread, INFINITE);
+    printf("other thread exited\n");
+
+    PrintTime(g_hThread, str_wait_type[g_proc_index], g_waited_count);
+
+    {
+        FILE* res_file = NULL;
+        errno_t err = fopen_s(&res_file, "res.csv", "a");
+        if (err)
+        {
+            printf("file could not be opened\n");
+            return 1;
+        }
+        char res_buf[1024];
+
+        // time is in us
+        sprintf_s(res_buf, sizeof(res_buf), "%s,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d\n",
+            str_wait_type[g_proc_index], g_timeout, g_waited_count, (g_umode_cpu_time / 10), (g_kmode_cpu_time / 10), (g_elapsed_time / 10), g_total_cycles,
+            (g_total_cycles * 10 / g_elapsed_time), // this is the # of cycles per us
+            g_total_cycles_on_thread, g_elapsed_time_us_on_thread);
+        fputs(res_buf, res_file);
+    }
+
+    return 0;
+}
